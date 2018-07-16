@@ -21,15 +21,18 @@ def parse_args():
 
     parser.add_argument('--n_hidden', type=int, default=512, help='Number of hidden units in a single LSTM   cell')
 
-    parser.add_argument('--n_input', type=int, default=128, help='Number of input words')
+    parser.add_argument('--n_input', type=int, default=200, help='Number of input words')
+
+    parser.add_argument('--n_classes', type=int, default=40, help='Number of classes')
 
     parser.add_argument('--n_stacks', type=int, default=1, help='Number of LSTM stacks')
 
+    parser.add_argument('--batch_size', type=int, default=4, help='Number of LSTM stacks')
+
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for Adam optimizer')
 
-    parser.add_argument('--num_epochs', type=int, default=1000, help='The number of epochs to run')
+    parser.add_argument('--n_epochs', type=int, default=1000, help='The number of epochs to run')
 
-    parser.add_argument('--batch_size', type=int, default=8, help='Batch size')
 
     return check_args(parser.parse_args())
 
@@ -61,6 +64,11 @@ def check_args(args):
         print('number of hidden units must be larger than one')
 
     try:
+        assert args.n_classes >= 1
+    except:
+        print('number of classes must be larger than one')
+
+    try:
         assert args.n_stacks >= 1
     except:
         print('number of stacked lstm must be atleast one')
@@ -77,7 +85,7 @@ def check_args(args):
         print('learning rate must be positive')
 
     try:
-        assert args.num_epochs >= 1
+        assert args.n_epochs >= 1
     except:
         print('number of epochs must be larger than or equal to one')
 
@@ -95,25 +103,29 @@ tf.reset_default_graph()
 def get_data(ind):
     label_path = '/home/knot/Documents/MTP/data/eeg_label.npy'
     input_path = '/home/knot/Documents/MTP/data/input_eeg.npy'
+    n_input = args.n_input
+    batch_size  = args.batch_size
+    n_classes = args.n_classes
+
 
     mat_input = np.load(input_path)
     mat_label = np.load(label_path)
 
     total = mat_inout.shape[0]
-    X = np.zeros((batch_size, 128, 200))
-    Y = np.zeros((batch_size, 40))
+    X = np.zeros((batch_size, 128, n_input))
+    Y = np.zeros((batch_size, n_classes))
 
 
     for i in range(8):
-        temp = mat_input[ind,:,:].T
+        temp = mat_input[ind+i,:,:].T
         X[i,:,:] = temp
-        temp = mat_label[ind,:,:]
+        temp = mat_label[ind+i,:,:]
         temp = np.squeeze(temp, axis = 0)
         Y[i,:] = temp
 
     X = np.array(X)
     Y = np.array(Y)
-    
+
     return X, Y
 
 
@@ -131,7 +143,7 @@ def rnn(inp_, args):
     outputs, states = tf.contrib.rnn.static_rnn(rnn_cell, inp_, dtype=tf.float32)
 
     dense1 = tf.layers.dense(inputs = outputs[-1], units = 512, activation = tf.nn.relu, name = "dense1")
-    logits = tf.layers.dense(inputs = dense1, units = 40)
+    logits = tf.layers.dense(inputs = dense1, units = n_classes)
     out = tf.nn.softmax(logits, name="softmax_output")
 
     return out
@@ -142,13 +154,14 @@ def main(args):
     logs_path = args.logs_path
     n_input = args.n_input
     n_hidden = args.n_hidden
-    epochs = args.num_epochs
+    epochs = args.n_epochs
+    n_classes = args.n_classes
     learning_rate = args.learning_rate
     batch_size = args.batch_size
     check_path = args.check_path
 
-    x = tf.placeholder(tf.float32, shape = (None, 200, 128))
-    y = tf.placeholder(tf.float32, shape = (None, 40))
+    x = tf.placeholder(tf.float32, shape = (None, n_input, 128))
+    y = tf.placeholder(tf.float32, shape = (None, n_classes))
 
     pred = rnn(x, args)
     cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=y))
@@ -167,17 +180,17 @@ def main(args):
     with tf.Session() as sess:
         sess.run(init)
         # saver.restore(sess, os.path.join(check_path,"/home/knot/Documents/MTP/chackpoints1/model.ckpt"))
-
         '''Training'''
 
         pt = 0
         for epoch in range(epochs):
-            rpoch_loss = 0
-            for ind in progressbar.progressbar(range(total)):
-                batchx = np.zeros((8, n_input, 200))
-                batchy = np.zeros((8, vocab_size))
+            epoch_loss = 0
+            avg_acc = 0
+            for ind in progressbar.progressbar(0,range(total),batch_size):
+                batchx = np.zeros((batch_size, n_input, 128))
+                batchy = np.zeros((batch_size, n_classes))
 
-                batchx[0], batchy[0] = get_data(ind)
+                batchx, batchy = get_data(ind)
                 batchx = np.array(batchx)
                 batchy = np.array(batchy)
 
@@ -188,7 +201,8 @@ def main(args):
                 saver.save(sess, os.path.join(check_path,"/home/knot/Documents/MTP/chackpoints1/model.ckpt"))
                 epoch_loss += loss
 
-            avg_acc /= len(X)
+            avg_acc /= total
+            avg_acc *= batch_size
             print("Epoch: ",epoch,"loss: ", epoch_loss, "acc: ", avg_acc)
 
 
