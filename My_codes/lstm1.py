@@ -7,13 +7,13 @@ import sys
 import os
 
 
+total = 6000
+
 
 def parse_args():
 
     desc = "Basic LSTM for text prediction"
     parser = argparse.ArgumentParser(description=desc)
-
-    parser.add_argument('--text_path', type=str, default='./text.txt', help='File path of text file to be read')
 
     parser.add_argument('--check_path', type=str, default='./check', help='File path to save checkpoints')
 
@@ -21,9 +21,11 @@ def parse_args():
 
     parser.add_argument('--n_hidden', type=int, default=512, help='Number of hidden units in a single LSTM   cell')
 
-    parser.add_argument('--n_input', type=int, default=3, help='Number of input words')
+    parser.add_argument('--n_input', type=int, default=128, help='Number of input words')
 
-    parser.add_argument('--learning_rate', type=float, default=1e-5, help='Learning rate for Adam optimizer')
+    parser.add_argument('--n_stacks', type=int, default=1, help='Number of LSTM stacks')
+
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for Adam optimizer')
 
     parser.add_argument('--num_epochs', type=int, default=1000, help='The number of epochs to run')
 
@@ -59,6 +61,12 @@ def check_args(args):
         print('number of hidden units must be larger than one')
 
     try:
+        assert args.n_stacks >= 1
+    except:
+        print('number of stacked lstm must be atleast one')
+
+
+    try:
         assert args.n_input >= 1
     except:
         print('number of words must be grater than or equal to one')
@@ -84,55 +92,49 @@ def check_args(args):
 tf.reset_default_graph()
 
 
-def get_data():
-    path = '/home/knot/Documents/MTP'
+def get_data(ind):
+    label_path = '/home/knot/Documents/MTP/data/eeg_label.npy'
+    input_path = '/home/knot/Documents/MTP/data/input_eeg.npy'
+
+    mat_input = np.load(input_path)
+    mat_label = np.load(label_path)
+
+    total = mat_inout.shape[0]
+    X = np.zeros((batch_size, 128, 200))
+    Y = np.zeros((batch_size, 40))
+
+
+    for i in range(8):
+        temp = mat_input[ind,:,:].T
+        X[i,:,:] = temp
+        temp = mat_label[ind,:,:]
+        temp = np.squeeze(temp, axis = 0)
+        Y[i,:] = temp
+
+    X = np.array(X)
+    Y = np.array(Y)
     
-   
-   
-   
-   
+    return X, Y
 
 
-
-def gen_data(for_dic, inv_dic, args):
-    n_input = args.n_input
-    data_path = args.text_path
-    fp = open(data_path,"r")
-    inp = []
-    op = []
-
-    lis = []
-    for word in fp.read().split():
-        lis.append(word);
-    print(len(lis))
-    for i in range(len(lis)-5):
-        temp = []
-        temp.append([for_dic[lis[i]]])
-        temp.append([for_dic[lis[i+1]]])
-        temp.append([for_dic[lis[i+2]]])
-        inp.append(temp)
-
-        yu = np.zeros((vocab_size), dtype = float)
-        yu[for_dic[lis[i+3]]] = 1.0
-        op.append([yu])
-
-
-    return inp, op
-
-
-
-def rnn(inp_, weight, bias, args):
+def rnn(inp_, args):
 
     n_input = args.n_input
     n_hidden = args.n_hidden
+    n_stacks = args.n_stacks
+
+
     inp_ = tf.reshape(inp_, [-1, n_input])
     inp_ = tf.split(inp_, n_input, 1)
 
-    # rnn_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden)
-    rnn_cell = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(n_hidden),tf.contrib.rnn.BasicLSTMCell(n_hidden)])
+    rnn_cell = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.BasicLSTMCell(n_hidden) for _ in range(n_stacks)])
     outputs, states = tf.contrib.rnn.static_rnn(rnn_cell, inp_, dtype=tf.float32)
 
-    return tf.matmul(outputs[-1], weight) + bias
+    dense1 = tf.layers.dense(inputs = outputs[-1], units = 512, activation = tf.nn.relu, name = "dense1")
+    logits = tf.layers.dense(inputs = dense1, units = 40)
+    out = tf.nn.softmax(logits, name="softmax_output")
+
+    return out
 
 
 def main(args):
@@ -145,16 +147,10 @@ def main(args):
     batch_size = args.batch_size
     check_path = args.check_path
 
+    x = tf.placeholder(tf.float32, shape = (None, 200, 128))
+    y = tf.placeholder(tf.float32, shape = (None, 40))
 
-
-    for_dic, inv_dic = get_data(args)
-    weight = tf.Variable(tf.random_normal([n_hidden, vocab_size]))
-    bias =  tf.Variable(tf.random_normal([vocab_size]))
-
-    x = tf.placeholder(tf.float32, shape = (None, n_input, 1))
-    y = tf.placeholder(tf.float32, shape = (None, vocab_size))
-
-    pred = rnn(x, weight, bias, args)
+    pred = rnn(x, args)
     cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=pred, labels=y))
     optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate).minimize(cost)
 
@@ -169,78 +165,34 @@ def main(args):
     saver = tf.train.Saver()
     writer = tf.summary.FileWriter(logs_path, graph=tf.get_default_graph())
     with tf.Session() as sess:
-        # sess.run(init)
-        saver.restore(sess, os.path.join(check_path,"model.ckpt"))
+        sess.run(init)
+        # saver.restore(sess, os.path.join(check_path,"/home/knot/Documents/MTP/chackpoints1/model.ckpt"))
 
         '''Training'''
 
-        X, Y = gen_data(for_dic, inv_dic, args)
-        X = np.array(X)
-        Y = np.array(Y)
-        fp = open("text.txt","r")
-        ct = 0
         pt = 0
         for epoch in range(epochs):
-            epoch_loss = 0
-            avg_acc = 0
-            if(epoch%10==0 and epoch!=0):
-                learning_rate = learning_rate*0.7
-            for i in progressbar.progressbar(range(len(X))):
-                batchx = np.zeros((1,n_input,1))
-                batchy = np.zeros((1,vocab_size))
+            rpoch_loss = 0
+            for ind in progressbar.progressbar(range(total)):
+                batchx = np.zeros((8, n_input, 200))
+                batchy = np.zeros((8, vocab_size))
 
-                batchx[0] = X[i,:,:]
-                batchy[0] = Y[i,:,:]
-                # print(inv_dic[batchx[0,0,0]], inv_dic[batchx[0,1,0]], inv_dic[batchx[0,2,0]])
+                batchx[0], batchy[0] = get_data(ind)
                 batchx = np.array(batchx)
                 batchy = np.array(batchy)
+
                 _, loss, onehot_pred, acc, summary = sess.run([optimizer, cost, pred, accuracy, summary_op], feed_dict={x: batchx, y: batchy})
                 writer.add_summary(summary, pt)
                 pt+=1
                 avg_acc +=  acc
-                saver.save(sess, os.path.join(check_path,"model.ckpt"))
-                temp = onehot_pred[0,:]
-                temp = temp.tolist()
-                oht_pred_index = int(np.argmax(temp))
-
-                temp2 = batchy[0,:]
-                temp2 = temp2.tolist()
-                oht_pred_index2 = int(np.argmax(temp2))
+                saver.save(sess, os.path.join(check_path,"/home/knot/Documents/MTP/chackpoints1/model.ckpt"))
                 epoch_loss += loss
+
             avg_acc /= len(X)
             print("Epoch: ",epoch,"loss: ", epoch_loss, "acc: ", avg_acc)
 
-        '''Testing'''
-        # X = np.zeros((n_input,1))
-        # X = np.array(X)
-        #
-        # X[0][0] = 1
-        # X[1][0] = 2
-        # X[2][0] = 3
-        # fp = open("new.txt","a")
-        # fp.write(inv_dic[X[0][0]])
-        # fp.write(" ")
-        # fp.write(inv_dic[X[1][0]])
-        # fp.write(" ")
-        # for i in range(100):
-        #
-        #     batchx = np.zeros((1,n_input,1))
-        #     batchx[0] = np.copy(X)
-        #
-        #     oht_pred = sess.run([pred], feed_dict={x: batchx})
-        #     # print(oht_pred.shape)
-        #     # temp = oht_pred[0,:]
-        #     # temp = temp.tolist()
-        #     oht_pred_index = int(np.argmax(oht_pred))
-        #     #
-        #     X[0][0] = np.copy(X[1][0])
-        #     X[1][0] = np.copy(X[2][0])
-        #     X[2][0] = oht_pred_index
-        #     #
-        #     #
-        #     # print(inv_dic[X[0][0]], inv_dic[X[1][0]], inv_dic[X[2][0]])
-        #     fp.write(inv_dic[X[2][0]])
-        #     fp.write(" ")
+
+
 
 
 
