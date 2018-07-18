@@ -1,3 +1,10 @@
+'''
+By Abhishek Pal, undegraduate Major Technical Project at Indian Institute of tenchnology
+LSTM model for EEG signal classification
+Date: 17/7/2018
+'''
+
+
 import tensorflow as tf
 import numpy as np
 import progressbar
